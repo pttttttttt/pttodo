@@ -281,6 +281,35 @@
     box-shadow:0 6px 20px rgba(0,0,0,.3);
   }
   .task{touch-action:none;} /* 允许 pointer 拖拽不被滚动打断 */
+  /* 休息块折叠细缝 */
+  .collapsed-strip{
+    min-height:0!important;height:10px!important;cursor:pointer;padding:0!important;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .timecell.collapsed-strip{background:var(--rest-short);}
+  .timecell.collapsed-strip.meal{background:var(--meal);}
+  .plan.collapsed-strip.rest-short,.plan.collapsed-strip.short{background:repeating-linear-gradient(45deg,#f2f4ee,#f2f4ee 5px,#e6e9df 5px,#e6e9df 10px);}
+  .plan.collapsed-strip.meal{background:repeating-linear-gradient(45deg,#faf1e2,#faf1e2 5px,#f0e3cd 5px,#f0e3cd 10px);}
+  .collapsed-strip:hover{filter:brightness(.96);}
+  [data-theme="dark"] .timecell.collapsed-strip{background:#26251f;}
+  [data-theme="dark"] .plan.collapsed-strip.rest-short,[data-theme="dark"] .plan.collapsed-strip.short{background:repeating-linear-gradient(45deg,#242320,#242320 5px,#2b2a24 5px,#2b2a24 10px);}
+  /* 折叠小按钮（展开状态下时间列右上角） */
+  .fold-btn{
+    position:absolute;top:2px;right:3px;width:16px;height:16px;line-height:14px;text-align:center;
+    font-size:11px;color:var(--ink-soft);border-radius:4px;cursor:pointer;opacity:.55;
+  }
+  .fold-btn:hover{opacity:1;background:rgba(0,0,0,.06);color:var(--accent);}
+  .timecell{position:relative;}
+  /* 手机折叠细缝 */
+  .m-collapsed{
+    height:10px;min-height:10px;cursor:pointer;
+    border-bottom:1px solid var(--paper-line);
+  }
+  .m-collapsed.short{background:repeating-linear-gradient(45deg,#f2f4ee,#f2f4ee 5px,#e6e9df 5px,#e6e9df 10px);}
+  .m-collapsed.meal{background:repeating-linear-gradient(45deg,#faf1e2,#faf1e2 5px,#f0e3cd 5px,#f0e3cd 10px);}
+  .m-collapsed:active{filter:brightness(.95);}
+  [data-theme="dark"] .m-collapsed.short{background:repeating-linear-gradient(45deg,#242320,#242320 5px,#2b2a24 5px,#2b2a24 10px);}
+  .m-time{position:relative;}
 
   /* ===== 清单抽屉 ===== */
   .inbox-mask{position:fixed;inset:0;background:rgba(43,42,38,.4);display:none;z-index:55;}
@@ -360,6 +389,7 @@
       <button class="btn ghost" id="thisWeek">回到本周</button>
     </div>
     <button class="btn" id="inboxBtn">📋 清单</button>
+    <button class="btn" id="foldBtn" title="折叠/展开所有休息">⇕ 休息</button>
     <button class="btn" id="editSlots">⚙ 时间段</button>
     <button class="btn" id="exportBtn">↓ 导出</button>
     <button class="btn" id="importBtn">↑ 导入</button>
@@ -512,6 +542,12 @@ function load(){
   if(!Array.isArray(d.inbox)) d.inbox=[];
   if(!Array.isArray(d.categories)) d.categories=DEFAULT_CATEGORIES.slice();
   if(!d.theme) d.theme='light';
+  // 折叠状态：休息块可折叠成细缝。老数据没有该字段时，默认折叠所有休息块。
+  let hasCollapsedField = d.slots.some(s=>'collapsed' in s);
+  d.slots.forEach(s=>{
+    if(s.rest && !('collapsed' in s)) s.collapsed = !hasCollapsedField ? true : false;
+    if(!s.rest) delete s.collapsed;
+  });
   return d;
 }
 function save(){localStorage.setItem(STORAGE_KEY,JSON.stringify(state));}
@@ -631,15 +667,17 @@ function renderWeekLabel(){
   document.getElementById('weekLabel').textContent=`${y}年 ${currentMonday.getMonth()+1}/${currentMonday.getDate()} – ${sun.getMonth()+1}/${sun.getDate()}`;
 }
 
-function rowHeightCss(kind){
+function rowHeightCss(sl){
+  const kind=slotKind(sl);
   if(kind==='work') return 'minmax(64px,auto)'; // 至少64px，内容多则自动撑高
+  if(sl.collapsed) return '10px'; // 折叠成细缝
   if(kind==='meal') return 'minmax(46px,auto)';
   return 'minmax(34px,auto)'; // short
 }
 
 function renderDesktop(){
-  // 每行高度：工作行随内容自适应，休息行也允许在有备注时长高
-  let rowsCss='auto '+state.slots.map(sl=>rowHeightCss(slotKind(sl))).join(' ');
+  // 每行高度：工作行随内容自适应，休息行折叠时为细缝
+  let rowsCss='auto '+state.slots.map(sl=>rowHeightCss(sl)).join(' ');
   let html=`<div class="grid desktop-view" style="grid-template-rows:${rowsCss};">`;
   html+='<div class="cell head corner">时间</div>';
   for(let d=0;d<7;d++){
@@ -648,9 +686,18 @@ function renderDesktop(){
   }
   state.slots.forEach((sl,si)=>{
     const kind=slotKind(sl);
+    if(kind!=='work' && sl.collapsed){
+      // 折叠：整行是一条可点细缝
+      html+=`<div class="cell timecell collapsed-strip ${kind}" onclick="toggleFold(${si})" title="点击展开 ${sl.start}-${sl.end}"></div>`;
+      for(let d=0;d<7;d++){
+        html+=`<div class="cell plan rest ${kind} collapsed-strip" onclick="toggleFold(${si})"></div>`;
+      }
+      return;
+    }
     const tag = kind==='meal'?'<div class="tag">用餐</div>':(kind==='short'?'<div class="tag">小憩</div>':'');
+    const foldBtn = kind!=='work' ? `<div class="fold-btn" onclick="event.stopPropagation();toggleFold(${si})" title="折叠">⌃</div>` : '';
     html+=`<div class="cell timecell ${kind}" onclick="openPicker(${si})" title="点击调整时间">
-      <div class="t">${sl.start}</div><div class="t2">${sl.end}</div>${tag}</div>`;
+      <div class="t">${sl.start}</div><div class="t2">${sl.end}</div>${tag}${foldBtn}</div>`;
     for(let d=0;d<7;d++){
       const date=addDays(currentMonday,d);const todayCol=isToday(date)?' col-today':'';
       if(kind==='work'){
@@ -709,8 +756,14 @@ function renderMobile(){
   html+='</div></div><div>';
   state.slots.forEach((sl,si)=>{
     const kind=slotKind(sl);
+    if(kind!=='work' && sl.collapsed){
+      // 折叠：一条可点细缝
+      html+=`<div class="m-row m-collapsed ${kind}" onclick="toggleFold(${si})" title="点击展开 ${sl.start}-${sl.end}"></div>`;
+      return;
+    }
     const tag=kind==='meal'?'<div class="tag" style="color:var(--meal-t)">用餐</div>':(kind==='short'?'<div class="tag" style="color:var(--rest-short-t)">小憩</div>':'');
-    html+=`<div class="m-row"><div class="m-time ${kind}" onclick="openPicker(${si})"><div class="t">${sl.start}</div><div class="t2">${sl.end}</div>${tag}</div>`;
+    const foldBtn = kind!=='work' ? `<div class="fold-btn" onclick="event.stopPropagation();toggleFold(${si})" title="折叠">⌃</div>` : '';
+    html+=`<div class="m-row"><div class="m-time ${kind}" onclick="openPicker(${si})"><div class="t">${sl.start}</div><div class="t2">${sl.end}</div>${tag}${foldBtn}</div>`;
     if(kind==='work'){
       html+=`<div class="m-plan" data-day="${activeDay}" data-slot="${si}">${renderItems(activeDay,si)}</div>`;
     }else{
@@ -1092,6 +1145,25 @@ function addItemLine(di,si){
   rerenderCell(di,si,newIdx);
 }
 
+/* ===== 休息块折叠 ===== */
+function toggleFold(si){
+  const sl=state.slots[si];
+  if(!sl || !sl.rest) return;
+  sl.collapsed = !sl.collapsed;
+  save(); render();
+}
+function toggleAllFold(){
+  const rests=state.slots.filter(s=>s.rest);
+  if(rests.length===0){toast('没有休息块');return;}
+  // 若还有任何展开的休息块，就全部折叠；否则全部展开
+  const anyOpen=rests.some(s=>!s.collapsed);
+  rests.forEach(s=>{ s.collapsed=anyOpen; });
+  // 直接改 state.slots 里的引用
+  state.slots.forEach(s=>{ if(s.rest) s.collapsed=anyOpen; });
+  save(); render();
+  toast(anyOpen?'已折叠所有休息':'已展开所有休息');
+}
+
 /* ===== 主题 ===== */
 function applyTheme(){
   document.documentElement.setAttribute('data-theme', state.theme);
@@ -1276,6 +1348,7 @@ function onCellTapPlace(di,si){
 }
 
 document.getElementById('inboxBtn').onclick=openInbox;
+document.getElementById('foldBtn').onclick=toggleAllFold;
 document.getElementById('closeInbox').onclick=closeInbox;
 document.getElementById('inboxMask').onclick=closeInbox;
 document.getElementById('addCat').onclick=addCategory;
