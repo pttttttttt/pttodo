@@ -320,6 +320,17 @@
     transform:translateX(100%);transition:transform .25s;display:flex;flex-direction:column;
   }
   .inbox.open{transform:translateX(0);}
+  /* 桌面：双栏模式——清单并排在右侧，主内容让出空间，不用遮罩 */
+  @media (min-width:821px){
+    body.inbox-open main{margin-right:340px;transition:margin-right .25s;}
+    body.inbox-open .inbox{box-shadow:-1px 0 0 var(--paper-line);}
+    body.inbox-open header{padding-right:0;}
+    .inbox{top:0;height:100vh;padding-top:0;z-index:56;}
+    /* 桌面双栏时不显示半透明遮罩 */
+    .inbox-mask{display:none!important;}
+    /* 让清单顶部与页面对齐，留出 header 高度 */
+    .inbox{padding-top:env(safe-area-inset-top,0);}
+  }
   .inbox-head{padding:16px 18px;border-bottom:1px solid var(--paper-line);display:flex;align-items:center;justify-content:space-between;}
   .inbox-head h2{margin:0;font-size:16px;}
   .inbox-head .hint{font-size:11px;color:var(--ink-soft);margin-top:2px;}
@@ -391,7 +402,8 @@
     <button class="btn" id="inboxBtn">📋 清单</button>
     <button class="btn" id="foldBtn" title="折叠/展开所有休息">⇕ 休息</button>
     <button class="btn" id="editSlots">⚙ 时间段</button>
-    <button class="btn" id="exportBtn">↓ 导出</button>
+    <button class="btn" id="imageBtn">🖼 图片</button>
+    <button class="btn" id="exportBtn">↓ 备份</button>
     <button class="btn" id="importBtn">↑ 导入</button>
     <button class="btn icon" id="themeBtn" title="深色/浅色">🌙</button>
     <input type="file" id="fileInput" class="file-input" accept="application/json">
@@ -1125,8 +1137,189 @@ function exportData(){
 }
 function importData(file){
   const reader=new FileReader();
-  reader.onload=e=>{try{const d=JSON.parse(e.target.result);if(!d.slots||!d.plans)throw 0;if(!confirm('导入会覆盖当前所有数据，确定继续吗？'))return;state=d;save();render();toast('导入成功');}catch(err){toast('导入失败：文件格式不正确');}};
+  reader.onload=e=>{try{const d=JSON.parse(e.target.result);if(!d.slots||!d.plans)throw 0;if(!confirm('导入会覆盖当前所有数据，确定继续吗？'))return;state=load2(d);save();render();toast('导入成功');}catch(err){toast('导入失败：文件格式不正确');}};
   reader.readAsText(file);
+}
+// 导入时也补齐字段
+function load2(d){
+  if(!Array.isArray(d.inbox))d.inbox=[];
+  if(!Array.isArray(d.categories))d.categories=DEFAULT_CATEGORIES.slice();
+  if(!d.theme)d.theme='light';
+  return d;
+}
+
+/* ===== 导出图片 ===== */
+function exportImage(fullWeek){
+  // fullWeek=true 展开所有休息块画完整版；false 用当前折叠状态
+  const dark = state.theme==='dark';
+  const C = dark ? {
+    bg:'#1e1d1a', paper:'#26251f', line:'#34322d', ink:'#e8e4da', inkSoft:'#9a948a',
+    accent:'#6ba793', accentSoft:'#243530', head:'#2a2822', meal:'#3a3024', mealT:'#c9a06a',
+    short:'#26251f', shortT:'#7d8a74', today:'#243530'
+  } : {
+    bg:'#f6f3ec', paper:'#ffffff', line:'#e4ded1', ink:'#2b2a26', inkSoft:'#6b675e',
+    accent:'#3a6b5e', accentSoft:'#e7efe9', head:'#f6f3ec', meal:'#f4e4cf', mealT:'#b07d3f',
+    short:'#eceee6', shortT:'#8f9b86', today:'#f0ede2'
+  };
+
+  // 参与绘制的行
+  const rows = state.slots.map((sl,si)=>({sl,si,kind:slotKind(sl),
+    collapsed: !fullWeek && sl.rest && sl.collapsed}));
+
+  // 尺寸计算
+  const scale=2; // 高清
+  const timeW=90, dayW=200, headH=66, padding=40, titleH=70;
+  const rowH=(r)=>{
+    if(r.collapsed) return 14;
+    if(r.kind==='work') return Math.max(64, measureRowHeight(r.si));
+    return r.kind==='meal'?48:36;
+  };
+  const totalW = timeW + dayW*7;
+  let bodyH = rows.reduce((s,r)=>s+rowH(r),0);
+  const totalH = titleH + headH + bodyH;
+
+  const cw=(totalW+padding*2), ch=(totalH+padding*2);
+  const canvas=document.createElement('canvas');
+  canvas.width=cw*scale; canvas.height=ch*scale;
+  const ctx=canvas.getContext('2d');
+  ctx.scale(scale,scale);
+  ctx.textBaseline='middle';
+
+  // 背景
+  ctx.fillStyle=C.bg; ctx.fillRect(0,0,cw,ch);
+  const ox=padding, oy=padding;
+
+  // 标题
+  const sun=addDays(currentMonday,6);
+  ctx.fillStyle=C.ink; ctx.font='bold 26px -apple-system,"PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign='left';
+  ctx.fillText('周计划表', ox, oy+26);
+  ctx.fillStyle=C.inkSoft; ctx.font='15px -apple-system,"PingFang SC",sans-serif';
+  const rangeStr=`${currentMonday.getFullYear()}年 ${currentMonday.getMonth()+1}/${currentMonday.getDate()} – ${sun.getMonth()+1}/${sun.getDate()}`;
+  ctx.fillText(rangeStr, ox+130, oy+27);
+
+  const gridY=oy+titleH;
+  // 表头背景
+  ctx.fillStyle=C.head;
+  ctx.fillRect(ox, gridY, totalW, headH);
+  // 表头文字
+  ctx.textAlign='center';
+  for(let d=0;d<7;d++){
+    const date=addDays(currentMonday,d);
+    const cx=ox+timeW+dayW*d+dayW/2;
+    const today=isToday(date);
+    if(today){ctx.fillStyle=C.today;ctx.fillRect(ox+timeW+dayW*d,gridY,dayW,headH);}
+    ctx.fillStyle=today?C.accent:C.ink; ctx.font='bold 16px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillText(DOW[d], cx, gridY+24);
+    ctx.fillStyle=C.inkSoft; ctx.font='13px -apple-system,sans-serif';
+    ctx.fillText(`${date.getMonth()+1}/${date.getDate()}`, cx, gridY+46);
+  }
+  ctx.fillStyle=C.inkSoft;ctx.font='13px sans-serif';
+  ctx.fillText('时间', ox+timeW/2, gridY+headH/2);
+
+  // 行
+  let y=gridY+headH;
+  rows.forEach(r=>{
+    const h=rowH(r);
+    // 时间列背景
+    let tbg=C.head;
+    if(r.kind==='meal')tbg=C.meal; else if(r.kind==='short')tbg=C.short;
+    ctx.fillStyle=tbg; ctx.fillRect(ox,y,timeW,h);
+    if(!r.collapsed){
+      ctx.textAlign='center';
+      ctx.fillStyle = r.kind==='meal'?C.mealT:(r.kind==='short'?C.shortT:C.ink);
+      ctx.font='bold 13px -apple-system,sans-serif';
+      ctx.fillText(r.sl.start, ox+timeW/2, y+h/2-8);
+      ctx.font='12px -apple-system,sans-serif';
+      ctx.fillStyle=r.kind==='meal'?C.mealT:(r.kind==='short'?C.shortT:C.inkSoft);
+      ctx.fillText(r.sl.end, ox+timeW/2, y+h/2+9);
+    }
+    // 各天格子
+    for(let d=0;d<7;d++){
+      const gx=ox+timeW+dayW*d;
+      const date=addDays(currentMonday,d);
+      // 背景
+      if(r.kind==='work'){
+        ctx.fillStyle= isToday(date)?C.today:C.paper;
+        ctx.fillRect(gx,y,dayW,h);
+      }else{
+        // 休息斜纹
+        ctx.fillStyle=C.paper;ctx.fillRect(gx,y,dayW,h);
+        drawStripes(ctx,gx,y,dayW,h, r.kind==='meal'?C.meal:C.short);
+      }
+      // 内容
+      if(r.kind==='work' && !r.collapsed){
+        const items=getItems(d,r.si);
+        ctx.textAlign='left';
+        let ty=y+16;
+        items.forEach(it=>{
+          if(ty>y+h-4)return;
+          // 完成勾
+          ctx.strokeStyle=it.d?C.accent:C.line; ctx.lineWidth=1.5;
+          ctx.beginPath();ctx.arc(gx+11,ty,5.5,0,Math.PI*2);ctx.stroke();
+          if(it.d){ctx.fillStyle=C.accent;ctx.beginPath();ctx.arc(gx+11,ty,5.5,0,Math.PI*2);ctx.fill();
+            ctx.strokeStyle='#fff';ctx.lineWidth=1.3;ctx.beginPath();ctx.moveTo(gx+8.5,ty);ctx.lineTo(gx+10.5,ty+2);ctx.lineTo(gx+13.5,ty-2.5);ctx.stroke();}
+          // 文字
+          ctx.fillStyle=it.d?C.inkSoft:C.ink; ctx.font='13px -apple-system,"PingFang SC",sans-serif';
+          let txt=it.t;
+          const maxW=dayW-30;
+          if(ctx.measureText(txt).width>maxW){
+            while(txt.length>1 && ctx.measureText(txt+'…').width>maxW)txt=txt.slice(0,-1);
+            txt+='…';
+          }
+          ctx.fillText(txt, gx+22, ty);
+          ty+=19;
+        });
+      }else if(!r.collapsed && r.kind!=='work'){
+        // 休息备注
+        const memo=getPlan(d,r.si);
+        if(memo){ctx.textAlign='left';ctx.fillStyle=C.inkSoft;ctx.font='12px sans-serif';
+          let txt=memo;const maxW=dayW-16;
+          if(ctx.measureText(txt).width>maxW){while(txt.length>1&&ctx.measureText(txt+'…').width>maxW)txt=txt.slice(0,-1);txt+='…';}
+          ctx.fillText(txt, gx+8, y+h/2);}
+      }
+    }
+    y+=h;
+  });
+
+  // 网格线
+  ctx.strokeStyle=C.line; ctx.lineWidth=1;
+  // 竖线
+  for(let c=0;c<=8;c++){const lx=ox+(c===0?0:timeW+dayW*(c-1));ctx.beginPath();ctx.moveTo(lx,gridY);ctx.lineTo(lx,y);ctx.stroke();}
+  ctx.beginPath();ctx.moveTo(ox+totalW,gridY);ctx.lineTo(ox+totalW,y);ctx.stroke();
+  // 横线
+  let ly=gridY;
+  ctx.beginPath();ctx.moveTo(ox,ly);ctx.lineTo(ox+totalW,ly);ctx.stroke();
+  ly+=headH;ctx.beginPath();ctx.moveTo(ox,ly);ctx.lineTo(ox+totalW,ly);ctx.stroke();
+  rows.forEach(r=>{ly+=rowH(r);ctx.beginPath();ctx.moveTo(ox,ly);ctx.lineTo(ox+totalW,ly);ctx.stroke();});
+
+  // 落款
+  ctx.textAlign='right';ctx.fillStyle=C.inkSoft;ctx.font='12px sans-serif';
+  ctx.fillText('周计划表', ox+totalW, y+22);
+
+  // 下载
+  canvas.toBlob(blob=>{
+    const url=URL.createObjectURL(blob);const a=document.createElement('a');
+    a.href=url;a.download=`周计划表_${fmt(currentMonday)}${fullWeek?'_完整':''}.png`;a.click();
+    URL.revokeObjectURL(url);
+    toast('图片已导出');
+  },'image/png');
+}
+// 估算工作格需要的高度（按最多条目的那天）
+function measureRowHeight(si){
+  let maxItems=1;
+  for(let d=0;d<7;d++){const n=getItems(d,si).length;if(n>maxItems)maxItems=n;}
+  return 16 + maxItems*19 + 6;
+}
+function drawStripes(ctx,x,y,w,h,color){
+  ctx.save();ctx.beginPath();ctx.rect(x,y,w,h);ctx.clip();
+  ctx.strokeStyle=color;ctx.lineWidth=6;ctx.globalAlpha=0.5;
+  for(let i=-h;i<w;i+=12){ctx.beginPath();ctx.moveTo(x+i,y+h);ctx.lineTo(x+i+h,y);ctx.stroke();}
+  ctx.restore();
+}
+function openImageMenu(){
+  const full = confirm('导出这一周的计划表为图片。\n\n点「确定」= 完整版（展开所有休息时间块）\n点「取消」= 当前视图（保持折叠状态）');
+  exportImage(full);
 }
 
 let toastTimer;
@@ -1201,8 +1394,8 @@ function onDragMove(e){
     g.textContent=drag.text;
     document.body.appendChild(g);
     drag.ghost=g;
-    // 拖拽开始就收起清单，方便看到表格
-    closeInbox();
+    // 手机(覆盖式)拖拽时收起清单方便看表格；桌面双栏不收，一直并排可见
+    if(isMobile()) closeInbox();
   }
   // 浮层跟随
   drag.ghost.style.left=e.clientX+'px';
@@ -1250,11 +1443,14 @@ function onDragUp(e){
 /* ===== 清单收集区 ===== */
 function openInbox(){
   document.getElementById('inbox').classList.add('open');
-  document.getElementById('inboxMask').classList.add('open');
+  document.body.classList.add('inbox-open');
+  // 手机(覆盖式)才需要半透明遮罩；桌面双栏不需要
+  if(isMobile()) document.getElementById('inboxMask').classList.add('open');
   renderInbox();
 }
 function closeInbox(){
   document.getElementById('inbox').classList.remove('open');
+  document.body.classList.remove('inbox-open');
   document.getElementById('inboxMask').classList.remove('open');
 }
 function renderInbox(){
@@ -1360,6 +1556,7 @@ document.getElementById('thisWeek').onclick=()=>{currentMonday=mondayOf(new Date
 document.getElementById('editSlots').onclick=openSlots;
 document.getElementById('addSlot').onclick=addSlot;
 document.getElementById('saveSlots').onclick=saveSlots;
+document.getElementById('imageBtn').onclick=openImageMenu;
 document.getElementById('exportBtn').onclick=exportData;
 document.getElementById('importBtn').onclick=()=>document.getElementById('fileInput').click();
 document.getElementById('fileInput').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value='';};
