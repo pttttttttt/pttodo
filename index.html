@@ -239,24 +239,38 @@
     .btn{padding:6px 10px;font-size:12px;}
   }
 
-  /* ===== 完成勾 ===== */
+  /* ===== 完成勾 & 多条 ===== */
   .plan{position:relative;}
-  .plan-wrap{display:flex;align-items:flex-start;width:100%;height:100%;}
+  .items{display:flex;flex-direction:column;width:100%;height:100%;padding:3px 4px 3px 0;}
+  .item-row{display:flex;align-items:flex-start;gap:0;}
   .done-btn{
-    flex:0 0 auto;width:18px;height:18px;margin:7px 2px 0 6px;border-radius:50%;
+    flex:0 0 auto;width:17px;height:17px;margin:4px 4px 0 6px;border-radius:50%;
     border:1.5px solid var(--rule);background:transparent;cursor:pointer;
-    display:flex;align-items:center;justify-content:center;font-size:11px;color:transparent;
+    display:flex;align-items:center;justify-content:center;font-size:10px;color:transparent;
     transition:.12s;padding:0;line-height:1;
   }
   .done-btn:hover{border-color:var(--accent);}
   .done-btn.on{background:var(--accent);border-color:var(--accent);color:#fff;}
-  .plan-wrap textarea{flex:1;padding-left:2px;}
-  .plan-wrap.done textarea{text-decoration:line-through;color:var(--ink-soft);opacity:.65;}
+  .item-row textarea{
+    flex:1;border:none;outline:none;resize:none;background:transparent;
+    padding:3px 4px 3px 2px;font-size:13px;line-height:1.4;color:var(--ink);
+    min-height:24px;overflow:hidden;
+  }
+  .item-row textarea::placeholder{color:#c8c2b3;}
+  .item-row.done textarea{text-decoration:line-through;color:var(--ink-soft);opacity:.6;}
+  .item-row textarea:focus{background:var(--accent-soft);border-radius:4px;}
+  .col-today .item-row textarea{background:transparent;}
+  .add-line{
+    font-size:12px;color:var(--ink-soft);cursor:text;padding:2px 4px 2px 27px;opacity:.5;
+  }
+  .add-line:hover{opacity:1;color:var(--accent);}
   /* 拖放高亮 */
   .plan.drop-hover{outline:2px dashed var(--accent);outline-offset:-2px;background:var(--accent-soft)!important;}
 
-  .m-plan .plan-wrap textarea{padding:9px 10px 9px 2px;}
-  .m-plan .done-btn{margin:9px 2px 0 8px;}
+  .m-plan .items{padding:5px 6px 5px 0;}
+  .m-plan .item-row textarea{font-size:14px;min-height:26px;padding:5px 6px 5px 2px;}
+  .m-plan .done-btn{margin:6px 4px 0 8px;width:19px;height:19px;}
+  .m-plan .add-line{padding:4px 6px 6px 31px;font-size:13px;}
   .m-plan.drop-hover{outline:2px dashed var(--accent);outline-offset:-2px;}
 
   /* ===== 清单抽屉 ===== */
@@ -506,27 +520,89 @@ function normPlan(v){
   if(typeof v==='string') return v.trim()===''?null:{t:v,d:false};
   return v;
 }
-function getPlanObj(di,si){const wk=state.plans[weekKey()];if(!wk)return null;const v=(wk[di]&&wk[di][si]);return normPlan(v);}
-function getPlan(di,si){const o=getPlanObj(di,si);return o?o.t:'';}
-function isDone(di,si){const o=getPlanObj(di,si);return o?!!o.d:false;}
-function setPlan(di,si,text){
+/* 计划格统一为多条：返回 [{t,d}, ...]。兼容旧的字符串 / 单对象 / 带\n的多行文本。 */
+function getItems(di,si){
+  const wk=state.plans[weekKey()];
+  if(!wk) return [];
+  let v=(wk[di]&&wk[di][si]);
+  if(v==null) return [];
+  // 已是新格式：{items:[...]}
+  if(v.items && Array.isArray(v.items)) return v.items;
+  // 旧单对象 {t,d}：若 t 里含换行，拆成多条（继承同一完成状态给第一条，其余未完成）
+  if(typeof v==='object' && 't' in v){
+    const lines=String(v.t).split('\n').filter(x=>x.trim()!=='');
+    if(lines.length<=1) return v.t.trim()===''?[]:[{t:v.t,d:!!v.d}];
+    return lines.map((t,i)=>({t, d:i===0?!!v.d:false}));
+  }
+  // 旧纯字符串
+  if(typeof v==='string'){
+    const lines=v.split('\n').filter(x=>x.trim()!=='');
+    return lines.map(t=>({t,d:false}));
+  }
+  return [];
+}
+function setItems(di,si,items){
   const wk=weekKey();
   if(!state.plans[wk])state.plans[wk]={};
   if(!state.plans[wk][di])state.plans[wk][di]={};
-  if(text.trim()===''){
+  const clean=items.filter(it=>it && it.t!=null); // 保留空字符串条目(正在输入)，但过滤null
+  if(clean.length===0){
     delete state.plans[wk][di][si];
   }else{
-    const prev=normPlan(state.plans[wk][di][si]);
-    state.plans[wk][di][si]={t:text, d:prev?prev.d:false};
+    state.plans[wk][di][si]={items:clean};
   }
   save();
 }
+// 兼容旧调用：getPlan 返回合并文本；isDone 返回"是否全部完成"
+function getPlanObj(di,si){const wk=state.plans[weekKey()];if(!wk)return null;const v=(wk[di]&&wk[di][si]);return normPlan(v);}
+function getPlan(di,si){return getItems(di,si).map(x=>x.t).join('\n');}
+function isDone(di,si){const items=getItems(di,si);return items.length>0 && items.every(x=>x.d);}
+function setPlan(di,si,text){
+  // 单条文本写入（用于拖放/放置等场景）：作为一条 item 追加或替换
+  const t=text;
+  if(t.trim()===''){setItems(di,si,[]);return;}
+  setItems(di,si,[{t,d:false}]);
+}
+// 追加一条（拖放/放置用）
+function appendItem(di,si,text){
+  if(!text||!text.trim())return;
+  const items=getItems(di,si).filter(it=>it.t.trim()!=='');
+  items.push({t:text,d:false});
+  setItems(di,si,items);
+}
+// 某一条的完成切换
+function toggleItemDone(di,si,idx){
+  const items=getItems(di,si);
+  if(!items[idx])return;
+  items[idx]={t:items[idx].t, d:!items[idx].d};
+  setItems(di,si,items);
+}
+// 编辑某一条文字
+function setItemText(di,si,idx,text){
+  const items=getItems(di,si);
+  while(items.length<=idx) items.push({t:'',d:false});
+  items[idx]={t:text, d:items[idx]?items[idx].d:false};
+  setItems(di,si,items);
+}
+// 在某条后面插入新空条（回车用），返回新条索引
+function insertItemAfter(di,si,idx){
+  const items=getItems(di,si);
+  items.splice(idx+1,0,{t:'',d:false});
+  setItems(di,si,items);
+  return idx+1;
+}
+// 删除某条（退格清空时用）
+function removeItem(di,si,idx){
+  const items=getItems(di,si);
+  items.splice(idx,1);
+  setItems(di,si,items);
+}
 function toggleDone(di,si){
-  const o=getPlanObj(di,si);
-  if(!o) return; // 空格子不能标完成
-  const wk=weekKey();
-  state.plans[wk][di][si]={t:o.t, d:!o.d};
-  save();
+  // 整格切换（保留兼容）：全部设为与"当前是否全完成"相反
+  const items=getItems(di,si);
+  if(items.length===0)return;
+  const allDone=items.every(x=>x.d);
+  setItems(di,si, items.map(x=>({t:x.t,d:!allDone})));
 }
 
 function isMobile(){return window.innerWidth<=820;}
@@ -568,24 +644,37 @@ function renderDesktop(){
       <div class="t">${sl.start}</div><div class="t2">${sl.end}</div>${tag}</div>`;
     for(let d=0;d<7;d++){
       const date=addDays(currentMonday,d);const todayCol=isToday(date)?' col-today':'';
-      const done=isDone(d,si);
-      const hasContent=getPlan(d,si)!=='';
-      const doneCls=done?' done':'';
-      const doneBtnCls=done?' on':'';
       if(kind==='work'){
-        html+=`<div class="cell plan${todayCol}" data-day="${d}" data-slot="${si}" ondragover="onDragOver(event,this)" ondragleave="onDragLeave(this)" ondrop="onDrop(event,${d},${si})">
-          <div class="plan-wrap${doneCls}">
-            <button class="done-btn${doneBtnCls}" onclick="onToggleDone(${d},${si})" title="标记完成">✓</button>
-            <textarea data-day="${d}" data-slot="${si}"></textarea>
-          </div></div>`;
+        html+=`<div class="cell plan${todayCol}" data-day="${d}" data-slot="${si}" ondragover="onDragOver(event,this)" ondragleave="onDragLeave(this)" ondrop="onDrop(event,${d},${si})">${renderItems(d,si)}</div>`;
       }else{
         const val=escapeHtml(getPlan(d,si));
-        html+=`<div class="cell plan rest ${kind}${todayCol}" data-day="${d}" data-slot="${si}" ondragover="onDragOver(event,this)" ondragleave="onDragLeave(this)" ondrop="onDrop(event,${d},${si})"><textarea data-day="${d}" data-slot="${si}" placeholder="备注">${val}</textarea></div>`;
+        html+=`<div class="cell plan rest ${kind}${todayCol}" data-day="${d}" data-slot="${si}" ondragover="onDragOver(event,this)" ondragleave="onDragLeave(this)" ondrop="onDrop(event,${d},${si})"><textarea class="rest-ta" data-day="${d}" data-slot="${si}" placeholder="备注">${val}</textarea></div>`;
       }
     }
   });
   html+='</div>';
   return html;
+}
+
+/* 渲染一个工作格里的多条待办 */
+function renderItems(di,si){
+  const items=getItems(di,si);
+  let html='<div class="items">';
+  if(items.length===0){
+    // 空格子：一条空输入行
+    html+=itemRowHtml(di,si,0,'',false);
+  }else{
+    items.forEach((it,idx)=>{ html+=itemRowHtml(di,si,idx,it.t,it.d); });
+  }
+  html+=`<div class="add-line" onclick="addItemLine(${di},${si})">＋ 添加一条</div>`;
+  html+='</div>';
+  return html;
+}
+function itemRowHtml(di,si,idx,text,done){
+  return `<div class="item-row${done?' done':''}">
+    <button class="done-btn${done?' on':''}" onclick="onToggleItem(${di},${si},${idx})" title="完成">✓</button>
+    <textarea class="item-ta" data-day="${di}" data-slot="${si}" data-idx="${idx}" rows="1" placeholder="${idx===0?'安排…':''}">${escapeHtml(text)}</textarea>
+  </div>`;
 }
 
 let mobileMode='day'; // 'day' 单日编辑 | 'week' 整周概览
@@ -613,16 +702,11 @@ function renderMobile(){
     const kind=slotKind(sl);
     const tag=kind==='meal'?'<div class="tag" style="color:var(--meal-t)">用餐</div>':(kind==='short'?'<div class="tag" style="color:var(--rest-short-t)">小憩</div>':'');
     html+=`<div class="m-row"><div class="m-time ${kind}" onclick="openPicker(${si})"><div class="t">${sl.start}</div><div class="t2">${sl.end}</div>${tag}</div>`;
-    const done=isDone(activeDay,si);
     if(kind==='work'){
-      html+=`<div class="m-plan" data-day="${activeDay}" data-slot="${si}" ondragover="onDragOver(event,this)" ondragleave="onDragLeave(this)" ondrop="onDrop(event,${activeDay},${si})">
-        <div class="plan-wrap${done?' done':''}">
-          <button class="done-btn${done?' on':''}" onclick="onToggleDone(${activeDay},${si})" title="标记完成">✓</button>
-          <textarea data-day="${activeDay}" data-slot="${si}" placeholder="安排这段时间…"></textarea>
-        </div></div>`;
+      html+=`<div class="m-plan" data-day="${activeDay}" data-slot="${si}" ondragover="onDragOver(event,this)" ondragleave="onDragLeave(this)" ondrop="onDrop(event,${activeDay},${si})">${renderItems(activeDay,si)}</div>`;
     }else{
       const val=escapeHtml(getPlan(activeDay,si));
-      html+=`<div class="m-plan rest ${kind}" data-day="${activeDay}" data-slot="${si}" ondragover="onDragOver(event,this)" ondragleave="onDragLeave(this)" ondrop="onDrop(event,${activeDay},${si})"><textarea data-day="${activeDay}" data-slot="${si}" placeholder="备注">${val}</textarea></div>`;
+      html+=`<div class="m-plan rest ${kind}" data-day="${activeDay}" data-slot="${si}" ondragover="onDragOver(event,this)" ondragleave="onDragLeave(this)" ondrop="onDrop(event,${activeDay},${si})"><textarea class="rest-ta" data-day="${activeDay}" data-slot="${si}" placeholder="备注">${val}</textarea></div>`;
     }
     html+='</div>';
   });
@@ -642,11 +726,16 @@ function renderWeekOverview(){
     const kind=slotKind(sl);
     html+=`<div class="ov-cell ov-time ${kind}">${sl.start}<br>${sl.end}</div>`;
     for(let d=0;d<7;d++){
-      const o=getPlanObj(d,si);
+      const items=getItems(d,si);
       const restCls=kind==='work'?'':(kind==='meal'?' meal':' rest-short');
-      const doneCls=o&&o.d?' done':'';
-      const txt=o?escapeHtml(o.t):'';
-      html+=`<div class="ov-cell ov-plan${restCls}${doneCls}">${txt}</div>`;
+      let inner='';
+      if(kind==='work'){
+        inner=items.map(it=>`<div${it.d?' style="text-decoration:line-through;opacity:.55"':''}>${escapeHtml(it.t)}</div>`).join('');
+      }else{
+        // 休息格备注仍是单条文本
+        inner=escapeHtml(getPlan(d,si));
+      }
+      html+=`<div class="ov-cell ov-plan${restCls}">${inner}</div>`;
     }
   });
   html+='</div></div><div class="ov-hint">← 左右滑动查看整周 · 横屏更清楚 →</div>';
@@ -656,25 +745,68 @@ function setMobileMode(m){mobileMode=m;render();}
 function selectDay(d){activeDay=d;render();}
 
 function bindTextareas(){
-  document.querySelectorAll('textarea[data-slot]').forEach(ta=>{
-    // work 行需要初始值（renderDesktop 中 work 行没内联 value，避免转义换行问题，这里补上）
-    if(ta.value===''){const v=getPlan(+ta.dataset.day,+ta.dataset.slot);if(v)ta.value=v;}
-    autoGrow(ta);
-    // 手机放置态：聚焦时若有待放置任务，先放入
+  // 休息格备注（单个）
+  document.querySelectorAll('textarea.rest-ta').forEach(ta=>{
+    autoGrowSimple(ta);
     ta.addEventListener('focus',e=>{
-      if(pendingTask){
-        e.preventDefault();ta.blur();
-        onCellTapPlace(+ta.dataset.day,+ta.dataset.slot);
+      if(pendingTask){e.preventDefault();ta.blur();onCellTapPlace(+ta.dataset.day,+ta.dataset.slot);}
+    });
+    ta.addEventListener('input',()=>{setPlan(+ta.dataset.day,+ta.dataset.slot,ta.value);autoGrowSimple(ta);});
+  });
+  // 工作格多条待办
+  document.querySelectorAll('textarea.item-ta').forEach(ta=>{
+    autoGrowSimple(ta);
+    const di=+ta.dataset.day, si=+ta.dataset.slot, idx=+ta.dataset.idx;
+    // 手机放置态：聚焦即放入
+    ta.addEventListener('focus',e=>{
+      if(pendingTask){e.preventDefault();ta.blur();onCellTapPlace(di,si);}
+    });
+    // 输入即保存该条
+    ta.addEventListener('input',()=>{setItemText(di,si,+ta.dataset.idx,ta.value);autoGrowSimple(ta);});
+    // 回车新增下一条；退格在空行删除本条
+    ta.addEventListener('keydown',e=>{
+      const curIdx=+ta.dataset.idx;
+      if(e.key==='Enter'){
+        e.preventDefault();
+        // 先存当前值，再插入新空条并聚焦
+        setItemText(di,si,curIdx,ta.value);
+        const newIdx=insertItemAfter(di,si,curIdx);
+        rerenderCell(di,si,newIdx);
+      }else if(e.key==='Backspace' && ta.value===''){
+        const items=getItems(di,si);
+        if(items.length>1){
+          e.preventDefault();
+          removeItem(di,si,curIdx);
+          rerenderCell(di,si,Math.max(0,curIdx-1));
+        }
       }
     });
-    ta.addEventListener('input',()=>{setPlan(+ta.dataset.day,+ta.dataset.slot,ta.value);autoGrow(ta);});
   });
 }
-function autoGrow(ta){
-  const row=ta.closest('.plan')||ta.closest('.m-plan');
+// 只重渲染单个格子并把焦点放到指定条（避免整页 render 丢焦点）
+function rerenderCell(di,si,focusIdx){
+  const cell=document.querySelector(`[data-day="${di}"][data-slot="${si}"].plan, [data-day="${di}"][data-slot="${si}"].m-plan`);
+  if(!cell){render();return;}
+  cell.innerHTML=renderItems(di,si);
+  // 重新绑定该格
+  cell.querySelectorAll('textarea.item-ta').forEach(ta=>{
+    autoGrowSimple(ta);
+    const d=+ta.dataset.day,s=+ta.dataset.slot;
+    ta.addEventListener('focus',e=>{if(pendingTask){e.preventDefault();ta.blur();onCellTapPlace(d,s);}});
+    ta.addEventListener('input',()=>{setItemText(d,s,+ta.dataset.idx,ta.value);autoGrowSimple(ta);});
+    ta.addEventListener('keydown',e=>{
+      const curIdx=+ta.dataset.idx;
+      if(e.key==='Enter'){e.preventDefault();setItemText(d,s,curIdx,ta.value);const ni=insertItemAfter(d,s,curIdx);rerenderCell(d,s,ni);}
+      else if(e.key==='Backspace'&&ta.value===''){const items=getItems(d,s);if(items.length>1){e.preventDefault();removeItem(d,s,curIdx);rerenderCell(d,s,Math.max(0,curIdx-1));}}
+    });
+  });
+  // 聚焦目标条
+  const target=cell.querySelector(`textarea.item-ta[data-idx="${focusIdx}"]`);
+  if(target){target.focus();const L=target.value.length;target.setSelectionRange(L,L);}
+}
+function autoGrowSimple(ta){
   ta.style.height='auto';
-  const min=parseInt(getComputedStyle(row).height)||40;
-  ta.style.height=Math.max(ta.scrollHeight,min)+'px';
+  ta.style.height=Math.max(ta.scrollHeight,ta.classList.contains('item-ta')?24:(isMobile()?52:40))+'px';
 }
 function escapeHtml(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
@@ -940,9 +1072,15 @@ function toast(msg){const el=document.getElementById('toast');el.textContent=msg
 
 /* 事件 */
 /* ===== 完成勾 ===== */
-function onToggleDone(di,si){
-  toggleDone(di,si);
-  render();
+function onToggleItem(di,si,idx){
+  toggleItemDone(di,si,idx);
+  rerenderCell(di,si,idx);
+}
+function addItemLine(di,si){
+  const items=getItems(di,si);
+  const newIdx=items.length; // 末尾加一条
+  setItemText(di,si,newIdx,'');
+  rerenderCell(di,si,newIdx);
 }
 
 /* ===== 主题 ===== */
@@ -976,11 +1114,7 @@ function onDrop(e,di,si){
   document.querySelectorAll('.drop-hover').forEach(x=>x.classList.remove('drop-hover'));
   let text = dragTask ? dragTask.text : (e.dataTransfer?e.dataTransfer.getData('text/plain'):'');
   if(!text) return;
-  // 若格子已有内容，追加换行；否则直接填入
-  const existing=getPlan(di,si);
-  const merged = existing ? (existing+'\n'+text) : text;
-  setPlan(di,si,merged);
-  // 从清单移除该任务
+  appendItem(di,si,text); // 作为新的一条待办追加
   if(dragTask && dragTask.id){
     state.inbox=state.inbox.filter(t=>t.id!==dragTask.id);
     save();
@@ -1088,8 +1222,7 @@ function cancelPlace(){pendingTask=null;hidePlaceBar();toast('已取消');}
 // 手机放置态下点格子
 function onCellTapPlace(di,si){
   if(!pendingTask)return false;
-  const existing=getPlan(di,si);
-  setPlan(di,si, existing?existing+'\n'+pendingTask.text:pendingTask.text);
+  appendItem(di,si,pendingTask.text);
   state.inbox=state.inbox.filter(t=>t.id!==pendingTask.id);
   save();pendingTask=null;hidePlaceBar();render();toast('已加入计划');
   return true;
@@ -1130,4 +1263,3 @@ if('serviceWorker' in navigator){
 </script>
 </body>
 </html>
-
