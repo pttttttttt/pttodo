@@ -109,7 +109,7 @@
   .timecell.meal .tag{background:rgba(176,125,63,.18);color:var(--meal-t);}
   .timecell.short .tag{background:rgba(143,155,134,.18);color:var(--rest-short-t);}
 
-  .plan textarea{width:100%;height:100%;border:none;outline:none;resize:none;background:transparent;padding:7px 8px;font-size:13px;line-height:1.45;color:var(--ink);display:block;}
+  .plan textarea{width:100%;border:none;outline:none;resize:none;background:transparent;padding:7px 8px;font-size:13px;line-height:1.45;color:var(--ink);display:block;overflow:hidden;}
   .plan textarea::placeholder{color:#c8c2b3;}
   .plan textarea:focus{background:var(--accent-soft);}
   .col-today .plan textarea{background:#faf8f0;}
@@ -241,7 +241,7 @@
 
   /* ===== 完成勾 & 多条 ===== */
   .plan{position:relative;}
-  .items{display:flex;flex-direction:column;width:100%;height:100%;padding:3px 4px 3px 0;}
+  .items{display:flex;flex-direction:column;width:100%;min-height:100%;padding:3px 4px 3px 0;box-sizing:border-box;}
   .item-row{display:flex;align-items:flex-start;gap:0;}
   .done-btn{
     flex:0 0 auto;width:17px;height:17px;margin:4px 4px 0 6px;border-radius:50%;
@@ -272,6 +272,15 @@
   .m-plan .done-btn{margin:6px 4px 0 8px;width:19px;height:19px;}
   .m-plan .add-line{padding:4px 6px 6px 31px;font-size:13px;}
   .m-plan.drop-hover{outline:2px dashed var(--accent);outline-offset:-2px;}
+  /* 拖拽跟随浮层 */
+  .drag-ghost{
+    position:fixed;z-index:100;pointer-events:none;
+    transform:translate(-50%,-140%);
+    background:var(--accent);color:#fff;padding:7px 12px;border-radius:8px;
+    font-size:13px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    box-shadow:0 6px 20px rgba(0,0,0,.3);
+  }
+  .task{touch-action:none;} /* 允许 pointer 拖拽不被滚动打断 */
 
   /* ===== 清单抽屉 ===== */
   .inbox-mask{position:fixed;inset:0;background:rgba(43,42,38,.4);display:none;z-index:55;}
@@ -622,15 +631,15 @@ function renderWeekLabel(){
   document.getElementById('weekLabel').textContent=`${y}年 ${currentMonday.getMonth()+1}/${currentMonday.getDate()} – ${sun.getMonth()+1}/${sun.getDate()}`;
 }
 
-function rowHeight(kind){
-  if(kind==='work') return 64;
-  if(kind==='meal') return 46;
-  return 34; // short
+function rowHeightCss(kind){
+  if(kind==='work') return 'minmax(64px,auto)'; // 至少64px，内容多则自动撑高
+  if(kind==='meal') return 'minmax(46px,auto)';
+  return 'minmax(34px,auto)'; // short
 }
 
 function renderDesktop(){
-  // 用 grid-auto-rows 无法逐行不同，改为显式 grid-template-rows
-  let rowsCss='auto '+state.slots.map(sl=>rowHeight(slotKind(sl))+'px').join(' ');
+  // 每行高度：工作行随内容自适应，休息行也允许在有备注时长高
+  let rowsCss='auto '+state.slots.map(sl=>rowHeightCss(slotKind(sl))).join(' ');
   let html=`<div class="grid desktop-view" style="grid-template-rows:${rowsCss};">`;
   html+='<div class="cell head corner">时间</div>';
   for(let d=0;d<7;d++){
@@ -645,10 +654,10 @@ function renderDesktop(){
     for(let d=0;d<7;d++){
       const date=addDays(currentMonday,d);const todayCol=isToday(date)?' col-today':'';
       if(kind==='work'){
-        html+=`<div class="cell plan${todayCol}" data-day="${d}" data-slot="${si}" ondragover="onDragOver(event,this)" ondragleave="onDragLeave(this)" ondrop="onDrop(event,${d},${si})">${renderItems(d,si)}</div>`;
+        html+=`<div class="cell plan${todayCol}" data-day="${d}" data-slot="${si}">${renderItems(d,si)}</div>`;
       }else{
         const val=escapeHtml(getPlan(d,si));
-        html+=`<div class="cell plan rest ${kind}${todayCol}" data-day="${d}" data-slot="${si}" ondragover="onDragOver(event,this)" ondragleave="onDragLeave(this)" ondrop="onDrop(event,${d},${si})"><textarea class="rest-ta" data-day="${d}" data-slot="${si}" placeholder="备注">${val}</textarea></div>`;
+        html+=`<div class="cell plan rest ${kind}${todayCol}" data-day="${d}" data-slot="${si}"><textarea class="rest-ta" data-day="${d}" data-slot="${si}" placeholder="备注">${val}</textarea></div>`;
       }
     }
   });
@@ -703,10 +712,10 @@ function renderMobile(){
     const tag=kind==='meal'?'<div class="tag" style="color:var(--meal-t)">用餐</div>':(kind==='short'?'<div class="tag" style="color:var(--rest-short-t)">小憩</div>':'');
     html+=`<div class="m-row"><div class="m-time ${kind}" onclick="openPicker(${si})"><div class="t">${sl.start}</div><div class="t2">${sl.end}</div>${tag}</div>`;
     if(kind==='work'){
-      html+=`<div class="m-plan" data-day="${activeDay}" data-slot="${si}" ondragover="onDragOver(event,this)" ondragleave="onDragLeave(this)" ondrop="onDrop(event,${activeDay},${si})">${renderItems(activeDay,si)}</div>`;
+      html+=`<div class="m-plan" data-day="${activeDay}" data-slot="${si}">${renderItems(activeDay,si)}</div>`;
     }else{
       const val=escapeHtml(getPlan(activeDay,si));
-      html+=`<div class="m-plan rest ${kind}" data-day="${activeDay}" data-slot="${si}" ondragover="onDragOver(event,this)" ondragleave="onDragLeave(this)" ondrop="onDrop(event,${activeDay},${si})"><textarea class="rest-ta" data-day="${activeDay}" data-slot="${si}" placeholder="备注">${val}</textarea></div>`;
+      html+=`<div class="m-plan rest ${kind}" data-day="${activeDay}" data-slot="${si}"><textarea class="rest-ta" data-day="${activeDay}" data-slot="${si}" placeholder="备注">${val}</textarea></div>`;
     }
     html+='</div>';
   });
@@ -1096,33 +1105,74 @@ function toggleTheme(){
   save(); applyTheme();
 }
 
-/* ===== 拖放（清单任务 -> 计划格） ===== */
-let dragTask=null; // {id, text}
-function onTaskDragStart(e,ci,ti){
-  const cat=state.categories[ci];
-  const task=state.inbox.filter(t=>t.cat===cat)[ti];
-  if(!task){return;}
-  dragTask={id:task.id, text:task.text};
-  if(e.dataTransfer){e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',task.text);}
-  e.target.classList.add('dragging');
-}
-function onTaskDragEnd(e){e.target.classList.remove('dragging');}
-function onDragOver(e,el){e.preventDefault();if(e.dataTransfer)e.dataTransfer.dropEffect='move';el.classList.add('drop-hover');}
-function onDragLeave(el){el.classList.remove('drop-hover');}
-function onDrop(e,di,si){
+/* ===== 拖放（清单任务 -> 计划格）：统一用 pointer 事件，电脑手机通用 ===== */
+let drag=null; // {id,text,ghost,started,startX,startY}
+const DRAG_THRESHOLD=6; // 移动超过6px才算拖拽
+
+function onTaskPointerDown(e,id){
+  const t=state.inbox.find(x=>x.id===id);
+  if(!t)return;
   e.preventDefault();
-  document.querySelectorAll('.drop-hover').forEach(x=>x.classList.remove('drop-hover'));
-  let text = dragTask ? dragTask.text : (e.dataTransfer?e.dataTransfer.getData('text/plain'):'');
-  if(!text) return;
-  appendItem(di,si,text); // 作为新的一条待办追加
-  if(dragTask && dragTask.id){
-    state.inbox=state.inbox.filter(t=>t.id!==dragTask.id);
-    save();
+  drag={id:t.id, text:t.text, ghost:null, started:false, startX:e.clientX, startY:e.clientY};
+  window.addEventListener('pointermove', onDragMove);
+  window.addEventListener('pointerup', onDragUp);
+}
+function onDragMove(e){
+  if(!drag)return;
+  const dx=e.clientX-drag.startX, dy=e.clientY-drag.startY;
+  if(!drag.started){
+    if(Math.abs(dx)<DRAG_THRESHOLD && Math.abs(dy)<DRAG_THRESHOLD) return;
+    // 开始拖拽：创建浮层
+    drag.started=true;
+    const g=document.createElement('div');
+    g.className='drag-ghost';
+    g.textContent=drag.text;
+    document.body.appendChild(g);
+    drag.ghost=g;
+    // 拖拽开始就收起清单，方便看到表格
+    closeInbox();
   }
-  dragTask=null;
-  render();
-  if(document.getElementById('inbox').classList.contains('open')) renderInbox();
-  toast('已加入计划');
+  // 浮层跟随
+  drag.ghost.style.left=e.clientX+'px';
+  drag.ghost.style.top=e.clientY+'px';
+  // 高亮当前悬停的格子
+  highlightCellAt(e.clientX,e.clientY);
+}
+function highlightCellAt(x,y){
+  document.querySelectorAll('.drop-hover').forEach(el=>el.classList.remove('drop-hover'));
+  const cell=cellFromPoint(x,y);
+  if(cell)cell.classList.add('drop-hover');
+}
+function cellFromPoint(x,y){
+  // 浮层会挡住 elementFromPoint，先临时禁用其指针事件
+  if(drag&&drag.ghost)drag.ghost.style.pointerEvents='none';
+  let el=document.elementFromPoint(x,y);
+  while(el && !(el.classList&&(el.classList.contains('plan')||el.classList.contains('m-plan')))){
+    el=el.parentElement;
+  }
+  return el;
+}
+function onDragUp(e){
+  window.removeEventListener('pointermove', onDragMove);
+  window.removeEventListener('pointerup', onDragUp);
+  if(!drag){return;}
+  if(drag.started){
+    const cell=cellFromPoint(e.clientX,e.clientY);
+    if(cell){
+      const di=+cell.dataset.day, si=+cell.dataset.slot;
+      appendItem(di,si,drag.text);
+      state.inbox=state.inbox.filter(t=>t.id!==drag.id);
+      save();
+      toast('已加入计划');
+    }
+    if(drag.ghost)drag.ghost.remove();
+    document.querySelectorAll('.drop-hover').forEach(el=>el.classList.remove('drop-hover'));
+    render();
+    // 不自动重开清单，让用户看到刚放入的内容；需要时自己再点"清单"
+  }else{
+    // 没拖动（点一下）：什么都不做，让用户知道要拖
+  }
+  drag=null;
 }
 
 /* ===== 清单收集区 ===== */
@@ -1148,15 +1198,12 @@ function renderInbox(){
       <div class="cat-title"><span class="dot"></span>${escapeHtml(cat)}
         <span class="cat-del" onclick="delCategory(${ci})" title="删除模块">✕</span></div>`;
     tasks.forEach((t)=>{
-      // 计算该任务在其分类内的索引，用于拖拽
-      const idxInCat=tasks.indexOf(t);
       const pending=pendingTask&&pendingTask.id===t.id?' style="outline:2px solid var(--accent);"':'';
-      html+=`<div class="task" draggable="true"${pending}
-        ondragstart="onTaskDragStart(event,${ci},${idxInCat})" ondragend="onTaskDragEnd(event)"
-        onclick="onTaskClick('${t.id}')">
+      html+=`<div class="task"${pending}
+        onpointerdown="onTaskPointerDown(event,'${t.id}')">
         <span class="grip">⠿</span>
         <span class="txt">${escapeHtml(t.text)}</span>
-        <span class="task-del" onclick="event.stopPropagation();delTask('${t.id}')">✕</span>
+        <span class="task-del" onpointerdown="event.stopPropagation();" onclick="event.stopPropagation();delTask('${t.id}')">✕</span>
       </div>`;
     });
     html+=`<div class="add-task">
